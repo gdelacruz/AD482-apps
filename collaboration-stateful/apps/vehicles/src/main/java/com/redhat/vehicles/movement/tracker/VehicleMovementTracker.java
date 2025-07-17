@@ -29,24 +29,46 @@ public class VehicleMovementTracker {
 
         // Event Value SerDes
         ObjectMapperSerde<Vehicle> vehicleSerde = new ObjectMapperSerde<>(
-            Vehicle.class
-        );
+                Vehicle.class);
         ObjectMapperSerde<VehicleMetrics> vehicleMetricsSerde = new ObjectMapperSerde<>(
-            VehicleMetrics.class
-        );
+                VehicleMetrics.class);
         ObjectMapperSerde<VehicleMoved> vehicleMovedSerde = new ObjectMapperSerde<>(
-            VehicleMoved.class
-        );
+                VehicleMoved.class);
 
         // TODO: Create GlobalKTable from "vehicles"
+        GlobalKTable<Integer, Vehicle> vehiclesTable = builder.globalTable(
+                "vehicles",
+                Materialized
+                        .<Integer, Vehicle, KeyValueStore<Bytes, byte[]>>as("vehicles-store")
+                        .withKeySerde(intSerde)
+                        .withValueSerde(vehicleSerde));
 
         // TODO: Create KStream from "vehicle-movements"
-
+        KStream<Integer, VehicleMoved> movementsStream = builder.stream(
+                "vehicle-movements",
+                Consumed.with(intSerde, vehicleMovedSerde));
         // TODO: join
-
+        KStream<Integer, VehicleStatus> vehicleStatusStream = movementsStream.join(
+                vehiclesTable,
+                (vehicleId, vehicleMoved) -> vehicleId,
+                (vehicleMoved, vehicle) -> new VehicleStatus(
+                        vehicle,
+                        vehicleMoved.latitude,
+                        vehicleMoved.longitude,
+                        vehicleMoved.elevation));
         // TODO: print the enriched stream
-
+        vehicleStatusStream.foreach((vehicleId, vehiclePosition) -> {
+            System.out.println(vehiclePosition);
+        });
         // TODO: group by, aggregate, and materialize
+        vehicleStatusStream.groupByKey().aggregate(
+                VehicleMetrics::new,
+                (vehicleId, vehicleStatus, vehicleMetrics) -> vehicleMetrics.update(vehicleStatus),
+                Materialized
+                        .<Integer, VehicleMetrics, KeyValueStore<Bytes, byte[]>>as(
+                                "vehicle-metrics-store")
+                        .withKeySerde(intSerde)
+                        .withValueSerde(vehicleMetricsSerde));
 
         return builder.build();
     }
